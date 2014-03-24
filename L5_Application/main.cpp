@@ -57,7 +57,7 @@ void task2(void* p2)
     while(1) {
         if(xSemaphoreTake(guard,portMAX_DELAY)){
             puts("Task 2: I got the key\n");
-        }
+        }//
         //uart0_puts("Byeeeeeeeeeeee from Task2");
         //vTaskDelay(1000);
     }

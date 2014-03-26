@@ -34,6 +34,7 @@
 #include "task.h"
 #include "eint.h"
 #include "wireless.h"
+#include "soft_timer.hpp"
 
 
 extern volatile uint32_t SlaveState;
@@ -42,11 +43,16 @@ extern char slave_buffer[4];
 
 SemaphoreHandle_t guard;
 
-void task1(void* p1)
+void task1()//(void* p1)
 {
     while(1) {
 
-        xSemaphoreGiveFromISR(guard,NULL);
+        puts("Task1: I am giving the key back");
+        SoftTimer myTimer(50);
+        if (myTimer.expired()) {
+            xSemaphoreGiveFromISR(guard,NULL);
+        }
+
         //uart0_puts("Hiiiiiiiii!! I am in Task1");
         //vTaskDelay(1000);
     }
@@ -56,12 +62,13 @@ void task2(void* p2)
 {
     while(1) {
         if(xSemaphoreTake(guard,portMAX_DELAY)){
-            puts("Task 2: I got the key\n");
+            puts("Task2: I got the key. Thank You!!\n");
         }//
         //uart0_puts("Byeeeeeeeeeeee from Task2");
         //vTaskDelay(1000);
     }
 }
+
 /*Wireless stuff------------------------------*/
 enum{
     lights_addr=100,
@@ -77,11 +84,11 @@ int main(void)
 {
     //===Wireless Loop back Test (Hope it will work!!)===============================
     if(0){
-        puts("Wireless Loopback Test");
+        puts("Wireless  Test");
         char cmd=0;
-        const char max_hops=0;
-        mesh_set_node_address(commander_addr);
-        while(1){
+        const char max_hops=1;
+        //mesh_set_node_address(commander_addr);
+        while(0){
 
             //---Sending logic------------------------------------------
             puts("Lights on!");
@@ -89,15 +96,15 @@ int main(void)
             wireless_send(lights_addr,mesh_pkt_nack, &cmd,1,max_hops);
             delay_ms(1000);
 
-            //puts("Lights off");
-            //cmd=lights_off;
-            //wireless_send(lights_addr,mesh_pkt_nack, &cmd,1,max_hops);
-            //delay_ms(1000);
-        //}
+            puts("Lights off");
+            cmd=lights_off;
+            wireless_send(lights_addr,mesh_pkt_nack, &cmd,1,max_hops);
+            delay_ms(1000);
+        }
 
         //---Receiving logic-----------------------------------------
         mesh_set_node_address(lights_addr);
-        //while(1){
+        while(1){
             //delay_ms(1000);
             //delay_ms(1000);
             mesh_packet_t pkt;
@@ -107,10 +114,10 @@ int main(void)
                 char command=pkt.data[0];
                 switch (command){
                     case lights_on:
-                        //LE.on(1);
+                        LE.on(1);
                         break;
                     case lights_off:
-                       // LE.off(1);
+                        LE.off(1);
                         break;
                     default:
                         printf("Error: Invalid Command!\n");
@@ -163,12 +170,41 @@ int main(void)
     }
 
     //Accelerometer Test====================================================
-    if(0){
+    if(1){
+        int raw=0;
+        float tilt_x;
+        float tilt_y;
+        float tilt_z;
+
         while(1){
-            int tilt_x = AS.getX();
-            int tilt_y = AS.getY();
-            int tilt_z = AS.getZ();
-            printf("X: %i, Y: %i, Z: %i\n",tilt_x,tilt_y,tilt_z);
+
+            if(raw){
+                tilt_x = AS.getX();
+                tilt_y = AS.getY();
+                tilt_z = AS.getZ();
+            }
+            if(!raw){
+                tilt_x = (AS.getX()*3.3/4095)-1.62;
+                tilt_y = (AS.getY()*3.3/4095)-1.62;
+                tilt_z = (AS.getZ()*3.3/4095)-1.62;
+            }
+            /*
+            if((tilt_x==-1) & (tilt_y==-1) & (tilt_z==0)){
+                printf("Neutral\n");
+            }
+            else if((tilt_x==-2) & (tilt_y==-1) & (tilt_z==0)){
+                printf("Right\n");
+            }
+            else if((tilt_x==-1) & (tilt_y==-1) & (tilt_z==-1)){
+               printf("Left\n");
+            }
+            else{
+                printf("Different\n");
+            }
+            */
+            printf("==========================================\n");
+            printf("X: %f, Y: %f, Z: %f\n",tilt_x,tilt_y,tilt_z);
+            printf("==========================================\n");
             delay_ms(1000);
         }
     }
@@ -177,13 +213,21 @@ int main(void)
 
 
     //===Task homework======================================================
-    if(1){
+    if(0){
 
-        vSemaphoreCreateBinary(guard);
+         //P2_7 for switch---
+        LPC_PINCON->PINSEL4 |=  (0x00 << 14);  //select p2_7
+        LPC_GPIO2->FIODIR    =  (0x00 << 14);  //set as input
 
-        //rit_setup_callback(isr_foo,1000);
-        xTaskCreate(task1, "task1", 1024, 0, 1, 0);
-        //xTaskCreate(task2, "task2", 1024, 0, 1, 0);
+        if(LPC_GPIO2->FIOPIN & (1<<14)){
+               eint3_enable_port2(7, eint_rising_edge, task1);
+         }
+
+         vSemaphoreCreateBinary(guard);
+
+
+        //xTaskCreate(task1, "task1", 1024, 0, 1, 0);
+        xTaskCreate(task2, "task2", 1024, 0, 1, 0);
         vTaskStartScheduler();
     }
 

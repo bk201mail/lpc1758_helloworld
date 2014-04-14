@@ -35,7 +35,8 @@
 #include "eint.h"
 #include "wireless.h"
 #include "soft_timer.hpp"
-
+#include "gpio.hpp"
+#include "lpc_pwm.hpp"
 
 extern volatile uint32_t SlaveState;
 extern char slave_buffer[4];
@@ -43,26 +44,28 @@ extern char slave_buffer[4];
 
 SemaphoreHandle_t guard;
 
-void task1()//(void* p1)
+void task1(void)  //(void)//(void* p1)
 {
-    while(1) {
+    //while(1) {
 
         puts("Task1: I am giving the key back");
-        SoftTimer myTimer(50);
-        if (myTimer.expired()) {
+        //SoftTimer myTimer(20);
+        //if (myTimer.expired()) {
             xSemaphoreGiveFromISR(guard,NULL);
-        }
+        //}
 
         //uart0_puts("Hiiiiiiiii!! I am in Task1");
         //vTaskDelay(1000);
-    }
+    //}
 }
 
 void task2(void* p2)
 {
+    //puts("I am in task2");
     while(1) {
         if(xSemaphoreTake(guard,portMAX_DELAY)){
             puts("Task2: I got the key. Thank You!!\n");
+
         }//
         //uart0_puts("Byeeeeeeeeeeee from Task2");
         //vTaskDelay(1000);
@@ -82,6 +85,103 @@ enum{
 
 int main(void)
 {
+    //===PMW ===================================================================
+    if(1){
+        /*
+                  --------------------------------------------------------------
+                  PWM      Int1        Int2       Function                      |
+                  --------------------------------------------------------------
+                  High     High        Low        Turn Anti-clockwise (Reverse) |
+                  High     Low         High       Turn clockwise (Forward)      |
+                  High     High        High         Stop                        |
+                  High     Low         Low          Stop                        |
+                  Low       X           X           Stop                        |
+               */
+
+        //FRONT MOTOR-----------------------------------------------
+
+        PWM front_Motor(PWM::pwm1, 1000); //Using 1KHz frequency...
+        front_Motor.set(100);
+        GPIO Int1_Front(P1_29);   //Interrupt-1 (Front_Motor)
+        Int1_Front.setAsOutput(); //Set as output
+        GPIO Int2_Front(P1_28);   //Interrupt-2 (Front_Motor)
+        Int2_Front.setAsOutput(); //Set as output
+        //-----------------------------------------------------------
+
+        //BACK MOTOR-------------------------------------------------
+        PWM back_Motor (PWM::pwm2, 1000); //Using 1KHz frequency...
+        back_Motor.set(100);
+        GPIO Int1_Back(P1_23);   //Interrupt-1 (Back_Motor)
+        Int1_Back.setAsOutput(); //Set as output
+        GPIO Int2_Back(P1_22);   //Interrupt-2 (Back_Motor)
+        Int2_Back.setAsOutput(); //Set as output
+        //------------------------------------------------------------
+
+
+        //===========TEST=================
+        //while(1){
+        printf("Forward\n");
+        Int1_Front.setLow();
+        Int2_Front.setLow();
+        Int1_Back.setHigh();
+        Int2_Back.setLow();
+        delay_ms(3000);
+        //}
+
+
+        printf("Stop\n");
+        Int1_Front.setLow();
+        Int2_Front.setLow();
+        Int1_Back.setLow();
+        Int2_Back.setLow();
+        delay_ms(2000);
+
+        printf("BackWard\n");
+        Int1_Front.setLow();
+        Int2_Front.setLow();
+        Int1_Back.setLow();
+        Int2_Back.setHigh();
+        delay_ms(3000);
+
+        printf("Stop\n");
+        Int1_Front.setLow();
+        Int2_Front.setLow();
+        Int1_Back.setLow();
+        Int2_Back.setLow();
+        delay_ms(2000);
+
+        printf("Forward_Right\n");
+        Int1_Front.setLow();
+        Int2_Front.setHigh();
+        Int1_Back.setHigh();
+        Int2_Back.setLow();
+        delay_ms(3000);
+
+        printf("Stop\n");
+        Int1_Front.setLow();
+        Int2_Front.setLow();
+        Int1_Back.setLow();
+        Int2_Back.setLow();
+        delay_ms(2000);
+
+        printf("Forward_Left\n");
+        Int1_Front.setHigh();
+        Int2_Front.setLow();
+        Int1_Back.setHigh();
+        Int2_Back.setLow();
+        delay_ms(3000);
+
+        printf("Stop\n");
+        Int1_Front.setLow();
+        Int2_Front.setLow();
+        Int1_Back.setLow();
+        Int2_Back.setLow();
+        delay_ms(2000);
+
+        //================================
+
+    }
+
     //===Wireless Loop back Test (Hope it will work!!)===============================
     if(0){
         puts("Wireless  Test");
@@ -103,7 +203,7 @@ int main(void)
         }
 
         //---Receiving logic-----------------------------------------
-        mesh_set_node_address(lights_addr);
+        mesh_set_node_address(motor_addr);
         while(1){
             //delay_ms(1000);
             //delay_ms(1000);
@@ -113,12 +213,14 @@ int main(void)
                 puts("Rx pkt!");
                 char command=pkt.data[0];
                 switch (command){
+                    /*
                     case lights_on:
                         LE.on(1);
                         break;
                     case lights_off:
                         LE.off(1);
                         break;
+                        */
                     default:
                         printf("Error: Invalid Command!\n");
                         break;
@@ -170,13 +272,43 @@ int main(void)
     }
 
     //Accelerometer Test====================================================
-    if(1){
+    if(0){
         int raw=0;
         float tilt_x;
         float tilt_y;
         float tilt_z;
-
+        char dire;
+        //----testing
+        AS.init();
         while(1){
+
+            int acc_val=AS.p_l_status();
+            int dir=(acc_val & 0x07) >> 1;
+            int ornt=(acc_val & 0x01);
+
+            if(dir==3){
+                dire='Left';
+            }
+            else if(dir==2){
+                dire='right';
+            }
+            else if(dir==0){
+                dire='Down';
+            }
+            else if(dir=1){
+                dire='up';
+            }
+            else {
+                printf("Invalid data\n");
+            }
+            printf("Dir: %i, Ornt: %i\n", dir, ornt);
+
+            printf("Direction: %C\n",dire);
+            delay_ms(1000);
+
+        }
+        //--------
+        while(0){
 
             if(raw){
                 tilt_x = AS.getX();
@@ -184,7 +316,7 @@ int main(void)
                 tilt_z = AS.getZ();
             }
             if(!raw){
-                tilt_x = (AS.getX()*3.3/4095)-1.62;
+                tilt_x = (AS.getX()*3.3/4095)-1.62;  //2**12-->4096 //2**10 -->1024
                 tilt_y = (AS.getY()*3.3/4095)-1.62;
                 tilt_z = (AS.getZ()*3.3/4095)-1.62;
             }
@@ -215,20 +347,39 @@ int main(void)
     //===Task homework======================================================
     if(0){
 
-         //P2_7 for switch---
-        LPC_PINCON->PINSEL4 |=  (0x00 << 14);  //select p2_7
-        LPC_GPIO2->FIODIR    =  (0x00 << 14);  //set as input
+        GPIO pp(P2_7);
+        pp.setAsInput();
+        //P2_7 for switch---
 
-        if(LPC_GPIO2->FIOPIN & (1<<14)){
+        vSemaphoreCreateBinary(guard);
+        //xTaskCreate(task2, "task2", 1024, 0, 1, 0);
+        //xTaskCreate(task1, "task1", 1024, NULL, 1, NULL);
+        //vTaskStartScheduler();
+
+        //vSemaphoreCreateBinary(guard);
+        //xSemaphoreTake(guard, 0);
+        //while(1){
+
+         //if(SW.getSwitch(1)){
+         //f(pp.read()==1){//LPC_GPIO2->FIOPIN & (1<<14)){
+               //printf("Sw pressed FU!!");
                eint3_enable_port2(7, eint_rising_edge, task1);
-         }
+               //task1();
 
-         vSemaphoreCreateBinary(guard);
+               //xTaskCreate(task2, "task2", 1024, 0, 1, 0);
+               //vTaskStartScheduler();
 
 
-        //xTaskCreate(task1, "task1", 1024, 0, 1, 0);
+         //}
+         //delay_ms(100);
+
+        //}
+
         xTaskCreate(task2, "task2", 1024, 0, 1, 0);
+        //xTaskCreate(task1, "task1", 1024, 0, 1, 0);
         vTaskStartScheduler();
+
+        //}
     }
 
 

@@ -23,12 +23,12 @@
 #include <stdio.h>      // printf() / scanf()
 #include "io.hpp"       // Board sensors
 #include "utilities.h"  // delay_ms()
-#include "uart2.hpp"    //uart2
-#include "string.h"     //for string (strlen)
-#include "spi.hpp"     // for spi1
+//#include "uart2.hpp"    //uart2
+//#include "string.h"     //for string (strlen)
+//#include "spi.hpp"     // for spi1
 #include "stdlib.h"
-#include "I2C2.hpp"       //for I2C2 Master
-#include "uart0_min.h"
+//#include "I2C2.hpp"       //for I2C2 Master
+//#include "uart0_min.h"
 #include <FreeRTOS.h>
 #include "semphr.h"
 #include "task.h"
@@ -37,119 +37,135 @@
 #include "soft_timer.hpp"
 #include "gpio.hpp"
 #include "lpc_pwm.hpp"
+#include "lpc_sys.h"
+//#include "ultra_sonic.hpp"
 
-extern volatile uint32_t SlaveState;
-extern char slave_buffer[4];
 
-
-SemaphoreHandle_t guard;
-
-void task1(void)  //(void)//(void* p1)
-{
-    //while(1) {
-
-        puts("Task1: I am giving the key back");
-        //SoftTimer myTimer(20);
-        //if (myTimer.expired()) {
-            xSemaphoreGiveFromISR(guard,NULL);
-        //}
-
-        //uart0_puts("Hiiiiiiiii!! I am in Task1");
-        //vTaskDelay(1000);
-    //}
-}
-
-void task2(void* p2)
-{
-    //puts("I am in task2");
-    while(1) {
-        if(xSemaphoreTake(guard,portMAX_DELAY)){
-            puts("Task2: I got the key. Thank You!!\n");
-
-        }//
-        //uart0_puts("Byeeeeeeeeeeee from Task2");
-        //vTaskDelay(1000);
-    }
-}
-
-/*Wireless stuff------------------------------*/
+/*Wireless define------------------------------*/
 enum{
-    lights_addr=100,
-    commander_addr=200,
+    car_addr=300,
+    commander_addr=400,
 };
+/*Motor defines---------------------------------*/
 enum{
-    lights_on =1,
-    lights_off=2,
+    move_forward   =1,
+    move_backward  =2,
+    move_right     =3,
+    move_left      =4,
+    stop           =5,
+    full_speed     =6,
+    half_speed     =7,
+    auto_pilot_on  =8,
+    auto_pilot_off =9,
+
 };
-/*-------------------------------------------*/
+/*--------------------------------------------*/
 
-int main(void)
-{
-    //===PMW ===================================================================
-    if(1){
-        /*
-                  --------------------------------------------------------------
-                  PWM      Int1        Int2       Function                      |
-                  --------------------------------------------------------------
-                  High     High        Low        Turn Anti-clockwise (Reverse) |
-                  High     Low         High       Turn clockwise (Forward)      |
-                  High     High        High         Stop                        |
-                  High     Low         Low          Stop                        |
-                  Low       X           X           Stop                        |
-               */
-
-        //FRONT MOTOR-----------------------------------------------
-
-        PWM front_Motor(PWM::pwm1, 1000); //Using 1KHz frequency...
-        front_Motor.set(100);
-        GPIO Int1_Front(P1_29);   //Interrupt-1 (Front_Motor)
+/*--------------------------------------------*/
+GPIO Int1_Front(P1_29);
+GPIO Int2_Front(P1_28);
+GPIO Int1_Back(P1_23);
+GPIO Int2_Back(P1_22);
+PWM front_Motor(PWM::pwm1, 1000);;
+PWM back_Motor(PWM::pwm1, 1000);;
+int watchdog=0;
+int right_sensor_distance=0;
+int left_sensor_distance=0;
+void motor_init(void){
+        //FRONT MOTOR----------------------------------------------
+        //front_Motor(PWM::pwm1, 1000); //Using 1KHz frequency...
+        //Int1_Front(P1_29);   //Interrupt-1 (Front_Motor)
         Int1_Front.setAsOutput(); //Set as output
-        GPIO Int2_Front(P1_28);   //Interrupt-2 (Front_Motor)
+        //Int2_Front(P1_28);   //Interrupt-2 (Front_Motor)
         Int2_Front.setAsOutput(); //Set as output
         //-----------------------------------------------------------
 
         //BACK MOTOR-------------------------------------------------
-        PWM back_Motor (PWM::pwm2, 1000); //Using 1KHz frequency...
-        back_Motor.set(100);
-        GPIO Int1_Back(P1_23);   //Interrupt-1 (Back_Motor)
+        //back_Motor (PWM::pwm2, 1000); //Using 1KHz frequency...
+        //Int1_Back(P1_23);   //Interrupt-1 (Back_Motor)
         Int1_Back.setAsOutput(); //Set as output
-        GPIO Int2_Back(P1_22);   //Interrupt-2 (Back_Motor)
+        //Int2_Back(P1_22);   //Interrupt-2 (Back_Motor)
         Int2_Back.setAsOutput(); //Set as output
         //------------------------------------------------------------
+}
 
+void motor_speed(int front_motor, int back_motor){
+    front_Motor.set(front_motor);     //running at 100%
+    back_Motor.set(back_motor);     //running at 100%
 
-        //===========TEST=================
+}
+
+/*Ultra Sonic sensor-------------------------------------------*/
+
+unsigned int timerValueAtIsr;
+unsigned int timerValueAtTrigger;
+//unsigned int timer_micro_sec;
+float distance;
+//float delta;
+void echo_fall_edge(void){
+    //while(1){
+    float timerDelta=0;
+    timerValueAtIsr = portGET_RUN_TIME_COUNTER_VALUE();   //Time (in ns) when falling edge of Echo pin is detected.
+    //printf("timerValueAtTrigger: %i\n", timerValueAtTrigger);
+    //printf("timerValueAtIsr: %i\n",timerValueAtIsr);
+
+    timerDelta = (timerValueAtIsr - timerValueAtTrigger);  //Difference between the time
+    timerDelta = (timerDelta * 0.666);                    //Converting time from nanosecond to microsecond.
+
+    //printf("timerDelta_us: %f\n", timerDelta);
+    distance = timerDelta /29;                   //Distance in CM (value is from DataSheet)
+
+    printf("timerDelta_CM: %f\n", distance);
+    //}
+    //return timerValueAtIsr;
+    //delta = sys_get_high_res_timer_us() - timer_micro_sec;
+    //printf("timer_micro_sec: %i\n", timer_micro_sec);
+    //printf("Delta: %i\n", delta);
+    delay_ms(1000);
+
+}
+
+void auto_mode_init(void){
+    GPIO echo_pin(P2_7);     //Define P2_7 as Echo pin.
+    echo_pin.setAsInput();  //Echo pin as input
+    LPC_GPIO1->FIODIR |= (1 << 20);   //Trigger pin as output (P1_20)
+    eint3_enable_port2(7, eint_falling_edge, echo_fall_edge); //interrupt on fall edge at P2_7
+}
+
+void auto_mode(void){
+         //delay_ms(2000);
+
         //while(1){
-        printf("Forward\n");
-        Int1_Front.setLow();
-        Int2_Front.setLow();
-        Int1_Back.setHigh();
-        Int2_Back.setLow();
-        delay_ms(3000);
+            timerValueAtTrigger = portGET_RUN_TIME_COUNTER_VALUE(); //Time (in ns) when sensor is trigger.
+            //timer_micro_sec = sys_get_high_res_timer_us();
+            LPC_GPIO1->FIOCLR = (1 << 20);     // clear trigger
+            delay_us(2);                      // delay for 10 us
+            LPC_GPIO1->FIOSET = (1 << 20);   // set trigger
+            delay_us(20);                   // delay for 10 us
+            LPC_GPIO1->FIOCLR = (1 << 20); // clear trigger
+            delay_ms(1000);
         //}
+}
+
+void auto_mode_stop_go(void){
+    //Stop the car and back a little bit
+    printf("Stop\n");
+    Int1_Front.setLow();
+    Int2_Front.setLow();
+    Int1_Back.setLow();
+    Int2_Back.setLow();
+    delay_ms(2000);
 
 
-        printf("Stop\n");
-        Int1_Front.setLow();
-        Int2_Front.setLow();
-        Int1_Back.setLow();
-        Int2_Back.setLow();
-        delay_ms(2000);
+    printf("BackWard\n");
+    Int1_Front.setLow();
+    Int2_Front.setLow();
+    Int1_Back.setLow();
+    Int2_Back.setHigh();
+    delay_ms(3000);
 
-        printf("BackWard\n");
-        Int1_Front.setLow();
-        Int2_Front.setLow();
-        Int1_Back.setLow();
-        Int2_Back.setHigh();
-        delay_ms(3000);
-
-        printf("Stop\n");
-        Int1_Front.setLow();
-        Int2_Front.setLow();
-        Int1_Back.setLow();
-        Int2_Back.setLow();
-        delay_ms(2000);
-
+    //Check right and left sensor
+    if(right_sensor_distance>=6.001){        //move right and then forward
         printf("Forward_Right\n");
         Int1_Front.setLow();
         Int2_Front.setHigh();
@@ -157,12 +173,14 @@ int main(void)
         Int2_Back.setLow();
         delay_ms(3000);
 
-        printf("Stop\n");
+        printf("Forward\n");
         Int1_Front.setLow();
         Int2_Front.setLow();
-        Int1_Back.setLow();
+        Int1_Back.setHigh();
         Int2_Back.setLow();
-        delay_ms(2000);
+        return;
+    }
+    else if(left_sensor_distance >=6.001) { //move left and then forward
 
         printf("Forward_Left\n");
         Int1_Front.setHigh();
@@ -171,381 +189,330 @@ int main(void)
         Int2_Back.setLow();
         delay_ms(3000);
 
-        printf("Stop\n");
+        printf("Forward\n");
         Int1_Front.setLow();
         Int2_Front.setLow();
-        Int1_Back.setLow();
+        Int1_Back.setHigh();
         Int2_Back.setLow();
-        delay_ms(2000);
-
-        //================================
+        return;
 
     }
-
-    //===Wireless Loop back Test (Hope it will work!!)===============================
-    if(0){
-        puts("Wireless  Test");
-        char cmd=0;
-        const char max_hops=1;
-        //mesh_set_node_address(commander_addr);
-        while(0){
-
-            //---Sending logic------------------------------------------
-            puts("Lights on!");
-            cmd=lights_on;
-            wireless_send(lights_addr,mesh_pkt_nack, &cmd,1,max_hops);
-            delay_ms(1000);
-
-            puts("Lights off");
-            cmd=lights_off;
-            wireless_send(lights_addr,mesh_pkt_nack, &cmd,1,max_hops);
-            delay_ms(1000);
+    else //go back a little and try again
+        if(watchdog==3){         //At-least Try 3 attempts before giving up...
+            //Stop the car and wait for user to take control.
+            LE.on(1);                                          //Turn on LED 1 to indicated user's help.
+            printf("Deadlock can't get out, Need user help\n");
+            return;
+        }
+        else{
+            printf("%i Try\n",watchdog);
+            watchdog=watchdog+1;
+            delay_ms(3000);
+            auto_mode_stop_go();
         }
 
-        //---Receiving logic-----------------------------------------
-        mesh_set_node_address(motor_addr);
+}
+
+void auto_mode_go(void){
+    //keep going forward
+    printf("Forward\n");
+    Int1_Front.setLow();
+    Int2_Front.setLow();
+    Int1_Back.setHigh();
+    Int2_Back.setLow();
+    //delay_ms(1000);
+}
+
+
+
+
+
+int main(void)
+{
+    //------Sending Logic------------------------------------------------------
+    if(0){
+            AS.init();                //Accelerometer initialization
+
+            puts("Wireless  Test");
+            char cmd=0;
+            int car_control=0;
+            int stop_car= 0;
+            int full_speed_car=0;
+            int half_speed_car=0;
+            int dir=0;
+            const char max_hops=1;
+            mesh_set_node_address(commander_addr);
+            while(1){
+                int acc_val=AS.p_l_status();     //read Accelerometer landscape register
+                int ornt   =(acc_val & 0x01);      //Read the orientation bit[0]
+
+                if(ornt==1){                    //Disable the direction when board is flipped (means it is in auto pilot mode)
+                    dir=4;
+                }
+                else{
+                    dir=(acc_val & 0x07) >> 1;  //Read the direction bits[3:1]
+                }
+
+                stop_car= SW.getSwitch(1);
+                full_speed_car=SW.getSwitch(2);
+                half_speed_car=SW.getSwitch(3);
+                if(stop_car or full_speed_car or half_speed_car){
+                    car_control=1;
+                }
+                else{
+                    car_control=0;
+                }
+
+
+                //Motor Control---------------------------------------------------------
+                if(dir==0 && !car_control){
+                    puts("Move Forward");
+                    cmd=move_forward;
+                    wireless_send(car_addr,mesh_pkt_nack, &cmd,1,max_hops);
+                    delay_ms(1000);
+                }
+
+                else if(dir==1 && !car_control){
+                    puts("Move Backward");
+                    cmd=move_backward;
+                    wireless_send(car_addr,mesh_pkt_nack, &cmd,1,max_hops);
+                    delay_ms(1000);
+                }
+
+                else if(dir==3 && !car_control){
+                    puts("Move Right");
+                    cmd=move_right;
+                    wireless_send(car_addr,mesh_pkt_nack, &cmd,1,max_hops);
+                    delay_ms(1000);
+                }
+
+                else if(dir==2 && !car_control){
+                    puts("Move Left");
+                    cmd=move_left;
+                    wireless_send(car_addr,mesh_pkt_nack, &cmd,1,max_hops);
+                    delay_ms(1000);
+                }
+
+                else if(ornt==1 && !car_control){
+                    puts("Auto Pilot Mode On");
+                    cmd=auto_pilot_on;
+                    wireless_send(car_addr,mesh_pkt_nack, &cmd,1,max_hops);
+                    delay_ms(1000);
+                }
+
+                else if(ornt==0 && !car_control){
+                    puts("Auto Pilot Mode Off");
+                    cmd=auto_pilot_off;
+                    wireless_send(car_addr,mesh_pkt_nack, &cmd,1,max_hops);
+                    delay_ms(1000);
+                }
+
+
+                else if(SW.getSwitch(1)){
+                    puts("Stop");
+                    cmd=stop;
+                    wireless_send(car_addr,mesh_pkt_nack, &cmd,1,max_hops);
+                    delay_ms(1000);
+                }
+
+                else if(SW.getSwitch(2)){
+                    puts("Full Speed");
+                    cmd=full_speed;
+                    wireless_send(car_addr,mesh_pkt_nack, &cmd,1,max_hops);
+                    delay_ms(1000);
+                }
+
+                else if(SW.getSwitch(3)){
+                    puts("Half Speed");
+                    cmd=half_speed;
+                    wireless_send(car_addr,mesh_pkt_nack, &cmd,1,max_hops);
+                    delay_ms(1000);
+                }
+
+                else{
+                    puts("Default stop");
+                    cmd=stop;
+                    wireless_send(car_addr,mesh_pkt_nack, &cmd,1,max_hops);
+                    delay_ms(1000);
+
+                }
+
+            }
+    }
+
+   //Revecing logic----------------------------------------------------------------
+    if(0){
+
+        motor_init();            //Motor initialization
+        motor_speed(100,100);   //Set motor , by default set to 100%
+        auto_mode_init();      //Ultra Sonic sensor initialization
+        mesh_set_node_address(car_addr);
         while(1){
-            //delay_ms(1000);
-            //delay_ms(1000);
             mesh_packet_t pkt;
-            printf("Pkt: %i\n",pkt);
+            //printf("Pkt: %i\n",pkt);
             if(wireless_get_rx_pkt(&pkt,1000)){
-                puts("Rx pkt!");
                 char command=pkt.data[0];
                 switch (command){
-                    /*
-                    case lights_on:
-                        LE.on(1);
+                    case move_forward:
+                        printf("Forward\n");
+                        Int1_Front.setLow();
+                        Int2_Front.setLow();
+                        Int1_Back.setHigh();
+                        Int2_Back.setLow();
+                        delay_ms(1000);
                         break;
-                    case lights_off:
-                        LE.off(1);
+                    case move_backward:
+                        printf("BackWard\n");
+                        Int1_Front.setLow();
+                        Int2_Front.setLow();
+                        Int1_Back.setLow();
+                        Int2_Back.setHigh();
+                        delay_ms(1000);
+
                         break;
-                        */
+                    case move_right:
+                        printf("Forward_Right\n");
+                        Int1_Front.setLow();
+                        Int2_Front.setHigh();
+                        Int1_Back.setHigh();
+                        Int2_Back.setLow();
+                        delay_ms(1000);
+
+                        break;
+                    case move_left:
+                        printf("Forward_Left\n");
+                        Int1_Front.setHigh();
+                        Int2_Front.setLow();
+                        Int1_Back.setHigh();
+                        Int2_Back.setLow();
+                        delay_ms(1000);
+
+                        break;
+                    case stop:
+                        //Stop the car---------------------
+                        printf("Stop\n");
+                        Int1_Front.setLow();
+                        Int2_Front.setLow();
+                        Int1_Back.setLow();
+                        Int2_Back.setLow();
+                        delay_ms(1000);
+                        break;
+
+                    case auto_pilot_on:
+                        printf("Auto Pilot Mode On\n");
+                        auto_mode();
+                        delay_ms(100);
+                        if(distance<=2.001){
+                            watchdog=0;
+                            if(LE.getValues()){
+                                printf("Deadlock found!!.Please Switch to user mode\n");
+
+                                while(command==!auto_pilot_on){
+                                    LE.off(1);
+                                    break;
+                                }
+
+                                break;
+                            }
+                            printf("Stopping the car\n");
+                            auto_mode_stop_go();
+                }
+                        else{
+                            auto_mode_go();
+                        }
+                        delay_ms(1000);
+                        break;
+
+                    case full_speed:
+                        printf("Setting Half speed\n");
+                        motor_speed(100,100); //running at 100%
+                        delay_ms(1000);
+                        break;
+                    case half_speed:
+                        printf("Setting Full speed\n");
+                        motor_speed(50,50);  //running at half speed 50%
+                        delay_ms(1000);
+                        break;
                     default:
                         printf("Error: Invalid Command!\n");
                         break;
+                        //------------------------------------
                 }
             }
 
         }
 
-
-    }
-
-
-    //===Proj========================================================================
-    if(0){
-        int cmd;
-        while(1){
-            //cmd=command_received();
-            if(cmd==1 ){
-                //pwm=right;
-                //right indicator
-            }
-            else if(cmd==2){
-                //pwd==left;
-                //left indicator
-            }
-            else if(cmd==3){
-                //pwd==forward;
-                if(cmd==5) {
-                    //front_light=1;
-                }
-                else{
-                    //front_light=0;
-                }
-            }
-            else if(cmd==4){
-                //pwd==back;
-            }
-            else {
-                //pwd=stop;
-                if(cmd==5) {
-                    //front_light=1;
-                }
-                else{
-                    //front_light=0;
-                }
-            }
-        }
-
-    }
-
-    //Accelerometer Test====================================================
-    if(0){
-        int raw=0;
-        float tilt_x;
-        float tilt_y;
-        float tilt_z;
-        char dire;
-        //----testing
-        AS.init();
-        while(1){
-
-            int acc_val=AS.p_l_status();
-            int dir=(acc_val & 0x07) >> 1;
-            int ornt=(acc_val & 0x01);
-
-            if(dir==3){
-                dire='Left';
-            }
-            else if(dir==2){
-                dire='right';
-            }
-            else if(dir==0){
-                dire='Down';
-            }
-            else if(dir=1){
-                dire='up';
-            }
-            else {
-                printf("Invalid data\n");
-            }
-            printf("Dir: %i, Ornt: %i\n", dir, ornt);
-
-            printf("Direction: %C\n",dire);
-            delay_ms(1000);
-
-        }
-        //--------
-        while(0){
-
-            if(raw){
-                tilt_x = AS.getX();
-                tilt_y = AS.getY();
-                tilt_z = AS.getZ();
-            }
-            if(!raw){
-                tilt_x = (AS.getX()*3.3/4095)-1.62;  //2**12-->4096 //2**10 -->1024
-                tilt_y = (AS.getY()*3.3/4095)-1.62;
-                tilt_z = (AS.getZ()*3.3/4095)-1.62;
-            }
-            /*
-            if((tilt_x==-1) & (tilt_y==-1) & (tilt_z==0)){
-                printf("Neutral\n");
-            }
-            else if((tilt_x==-2) & (tilt_y==-1) & (tilt_z==0)){
-                printf("Right\n");
-            }
-            else if((tilt_x==-1) & (tilt_y==-1) & (tilt_z==-1)){
-               printf("Left\n");
-            }
-            else{
-                printf("Different\n");
-            }
-            */
-            printf("==========================================\n");
-            printf("X: %f, Y: %f, Z: %f\n",tilt_x,tilt_y,tilt_z);
-            printf("==========================================\n");
-            delay_ms(1000);
-        }
     }
 
 
 
 
-    //===Task homework======================================================
-    if(0){
 
-        GPIO pp(P2_7);
+    //===Ultra_sonic Sensor====================================================
+
+    if(1){
+         delay_ms(2000);
+         /*
+        //LPC_PINCON->PINSEL3 |=  (0x03 << 6);  //enable CAP1.1
+        //LPC_SC->PCONP |= 1 << 2; //Power up TimerCounter1
+        LPC_TIM1->TCR |= 1<<1;  //enable timer reset
+        LPC_TIM1->PR = 0x0;    //count every pclk tick
+        //LPC_TIM1->CCR |= (1<<4);  //falling edge interrupt
+        LPC_TIM1->TCR |=1<<0; //enable timer
+
+        LPC_GPIO1->FIODIR &= ~(1 << 19);  //Echo as input
+        LPC_GPIO1->FIODIR |= (1 << 20);   //Trigger as output
+        */
+
+        //portRESET_TIMER_FOR_RUN_TIME_STATS();
+        //delay_us(2);
+        GPIO pp(P2_7);    //Echo as input
         pp.setAsInput();
-        //P2_7 for switch---
-
-        vSemaphoreCreateBinary(guard);
-        //xTaskCreate(task2, "task2", 1024, 0, 1, 0);
-        //xTaskCreate(task1, "task1", 1024, NULL, 1, NULL);
-        //vTaskStartScheduler();
-
-        //vSemaphoreCreateBinary(guard);
-        //xSemaphoreTake(guard, 0);
-        //while(1){
-
-         //if(SW.getSwitch(1)){
-         //f(pp.read()==1){//LPC_GPIO2->FIOPIN & (1<<14)){
-               //printf("Sw pressed FU!!");
-               eint3_enable_port2(7, eint_rising_edge, task1);
-               //task1();
-
-               //xTaskCreate(task2, "task2", 1024, 0, 1, 0);
-               //vTaskStartScheduler();
-
-
-         //}
-         //delay_ms(100);
-
-        //}
-
-        xTaskCreate(task2, "task2", 1024, 0, 1, 0);
-        //xTaskCreate(task1, "task1", 1024, 0, 1, 0);
-        vTaskStartScheduler();
-
-        //}
-    }
-
-
-
-    //===I2C2==============================================================
-        if(0){
-            I2C2::getInstance().init(400);
-
-            for (int i = 0; i < 4; i++ ){
-                    printf("Init slave_buffer %i : %X\n",i, slave_buffer[i]);
-
-            }
-
-            //Slave---------------------------------------------------------
-            if(1){
-                printf("----I2C Slave----\n");
-
-                while(SlaveState!=SlaveIdle){
-
-                    //printf("I2C State Status: %X\n", LPC_I2C2->I2CONSET);
-                    //delay_ms(100);
-                }
-                delay_ms(1000);
-
-                for ( int i = 0; i < 4; i++ )
-                {
-                    printf("slave_buffer %i : %X\n",i,slave_buffer[i]);
-                }
-
-
-                int a = slave_buffer[0];
-                int count = slave_buffer[1];
-                LE.on(a);
-                delay_ms(count* 1000);
-                LE.off(a);
-
-            }
-
-
-
-            //Master------------------------------------------------------------------
-            if(0){
-                int dev_stat;
-                printf("----I2C Master----\n");
-                dev_stat=I2C2::getInstance().checkDeviceResponse(0x38);
-                printf("Acceleration status: %i\n", dev_stat);
-                dev_stat=I2C2::getInstance().checkDeviceResponse(0x77);
-                printf("I2C slave status: %i\n", dev_stat);
-                LPC_PINCON->PINSEL2 |=  (0x00 << 15);  //select p1_15 SW3
-                LPC_GPIO1->FIODIR    =  (0x00 << 15);  //set as input
-                while(1){
-                    if(LPC_GPIO1->FIOPIN & (1<<15)){
-                        printf("Switch 3 pressed\n");
-                        const char my_dev_addr = 0x77; // device address
-                        const char my_dev_reg  = 0x02; // register address
-                        const char my_dev_data = 0x04; // data
-                        I2C2::getInstance().writeReg(my_dev_addr, my_dev_reg, my_dev_data);
-                    }
-
-                    delay_ms(100);
-                }
-            }
-
-        }
-
-       //===SPI1=====================================================================
-        if(0){
-            //FLASH mem-----------------------
-            //INIT FLASH
-            spi1_init();
-
-            LPC_GPIO0->FIOCLR = (1<<6);
-            //LPC_SSEL1->FIOSET= (1<<10);
-
-            spi1_ExchangeByte(0x9F);
-            char rd_byte0=spi1_ExchangeByte(0x00);
-            char rd_byte1=spi1_ExchangeByte(0x00);
-            char rd_byte2=spi1_ExchangeByte(0x00);
-            char rd_byte3=spi1_ExchangeByte(0x00);
-            printf("Manufacture ID: %X\n", rd_byte0);
-            printf("Device ID1: %X\n",rd_byte1);
-            printf("Device ID2:%X\n",rd_byte2);
-            printf("Extended Device info string length: %X\n",rd_byte3);
-
-            //desslect flash mem
-            //LPC_GPIO0->FIOSET = (1<<6);
-
-            //CS enabel
-            //LPC_GPIO0->FIOCLR = (1<<6);
-
-            spi1_ExchangeByte(0xD2);
-            char rd_fat32=spi1_ExchangeByte(0x00);
-            printf("Its not working damit: %i\n", rd_fat32);
-            //spi1_ExchangeByte(0x0D);
-
-            //spi1_ExchangeByte(0x33);
-            //spi1_ExchangeByte(0x44);
-            //spi1_ExchangeByte(0x55);
-            //spi1_ExchangeByte(0x66);
-
-            //char rd_fat32=spi1_ExchangeByte(0x00);
-            //char rd_byte1=spi1_ExchangeByte(0x00);
-            //char rd_byte3=spi1_ExchangeByte(0x00);
-
-            //int fd;
-
-            //printf("byte per sector: %X\n", rd_fat32);
-            //rd_fat32=spi1_ExchangeByte(0x00);
-            //printf("byte per sector2: %X\n", rd_fat32);
-
-            int i=0;
-            for(i=0;i<12;i++){
-                printf("%i byte: %i\n", i, rd_fat32);
-                rd_fat32=spi1_ExchangeByte(0x00);
-            }
-
-
-            //printf("2nd byte: %X\n",rd_byte1);
-
-            //CS disable
-            LPC_GPIO0->FIOSET = (1<<6);
-        }
-
-        //===UART2==============================================================
-        if(0){
-            //printf("UART2 Testing");
-            int len;
-            char a[100];
-            char c;
-            char c_string[100];
-
-            uart2_init(9600);
-            delay_ms(1000);
-            while(0){
-                //Sending
-                scanf("%s", a);
-                strcat(a,"~");
-                printf("Sending: \t%s\n", a);
-                uart2_putstring(a);
-
-
-                //Receiving
-                c= uart2_getchar();
-                while(c!='~'){
-                    len=strlen(c_string);
-                    c_string[len] =c;
-                    c_string[len+1]='\0';
-                    c= uart2_getchar();
-                }
-                printf("I Received>>: \t%s\n", c_string);
-
-                len=strlen(c_string);
-                for(int i=0;i<len;i++){
-                    c_string[i]='\0';
-                }
-
-            }
-        }
-
-    if(0){
+        LPC_GPIO1->FIODIR |= (1 << 20);   //Trigger as output
+        eint3_enable_port2(7, eint_falling_edge, echo_fall_edge);
+        //eint3_enable_port2(7, eint_rising_edge, foo2);
+        printf("US test\n");
         while(1){
-            printf("Temperature is: %f\n", TS.getFarenheit());
-            printf("  Light sensor: %u%%\n\n", LS.getPercentValue());
-            delay_ms(1000);
+
+        timerValueAtTrigger = portGET_RUN_TIME_COUNTER_VALUE();
+        //timer_micro_sec = sys_get_high_res_timer_us();
+        //printf("timer_micro_sec_inside: %i\n", timer_micro_sec);
+        LPC_GPIO1->FIOCLR = (1 << 20); // clear trigger
+        delay_us(2); // delay for 10 us
+        LPC_GPIO1->FIOSET = (1 << 20); // set trigger
+        delay_us(20); // delay for 10 us
+        LPC_GPIO1->FIOCLR = (1 << 20); // clear trigger
+
+
+        //unsigned int
+        //printf("timerValueAtTrigger: %i\n", timerValueAtTrigger);
+        //delay_ms(1000);
+        //unsigned int timerDelta=0;
+        //timerDelta = (timerValueAtIsr - timerValueAtTrigger);
+        //printf("timerDelta: %i\n", timerDelta);
+        //unsigned  int deltaInMicroSec = timerDelta * 0.666;
+
+        /*
+        unsigned int timeAtTrigger = LPC_TIM1->TC;
+        LPC_TIM1->CCR |= (1<<4);  //falling edge interrupt
+        unsigned int timeAfterTrigger = LPC_TIM1->TC;
+        LPC_TIM1->CCR |= (0<<4);  //falling edge interrupt
+
+        unsigned int delta = timeAfterTrigger - timeAtTrigger;
+        delta = delta * 0.666; //in Us
+        delta = delta - 750;
+        delta =delta/2;
+        delta = delta/73.746;
+        */
+        //printf("Distance_inch: %i\n", deltaInMicroSec);
+         delay_ms(1000);
+        //printf("dead\n");
+        //delay_ms(1000);
+
         }
     }
-
     return -1;
 }
+
+
+
